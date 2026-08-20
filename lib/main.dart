@@ -1,121 +1,257 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import 'loading_page/startup_loading_screen.dart';
+import 'models/song.dart';
+import 'player_page/now_playing_screen.dart';
+import 'player_page/player_controller.dart';
+import 'services/music_library.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const MusicByeApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class MusicByeApp extends StatefulWidget {
+  const MusicByeApp({super.key});
 
-  // This widget is the root of your application.
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
-    );
+  State<MusicByeApp> createState() => _MusicByeAppState();
+}
+
+class _MusicByeAppState extends State<MusicByeApp> {
+  final MusicLibrary _musicLibrary = MusicLibrary();
+  final PlayerController _playerController = PlayerController();
+
+  List<Song> _initialSongs = const [];
+  String? _initialError;
+  bool _isStarting = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _startApplication();
   }
-}
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+  Future<void> _startApplication() async {
+    final startedAt = DateTime.now();
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
+    try {
+      _initialSongs = await _musicLibrary.readSongs();
+    } on MusicLibraryException catch (error) {
+      _initialError = error.message;
+    } on PlatformException catch (error) {
+      _initialError = error.message ?? 'No pudimos leer tu música.';
+    } catch (_) {
+      _initialError = 'Ocurrió un error inesperado.';
+    }
 
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
+    const minimumLoadingTime = Duration(seconds: 10);
+    final elapsedTime = DateTime.now().difference(startedAt);
+    final remainingTime = minimumLoadingTime - elapsedTime;
 
-  final String title;
+    if (remainingTime > Duration.zero) {
+      await Future.delayed(remainingTime);
+    }
 
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
+    if (!mounted) return;
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-
-  void _incrementCounter() {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      _isStarting = false;
     });
   }
 
   @override
+  void dispose() {
+    _playerController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'MusicBye',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.indigoAccent,
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+      ),
+      home: _isStarting
+          ? const StartupLoadingScreen()
+          : LibraryScreen(
+              initialSongs: _initialSongs,
+              initialError: _initialError,
+              playerController: _playerController,
+            ),
+    );
+  }
+}
+
+class LibraryScreen extends StatefulWidget {
+  const LibraryScreen({
+    super.key,
+    required this.initialSongs,
+    required this.playerController,
+    this.initialError,
+  });
+
+  final List<Song> initialSongs;
+  final String? initialError;
+  final PlayerController playerController;
+
+  @override
+  State<LibraryScreen> createState() => _LibraryScreenState();
+}
+
+class _LibraryScreenState extends State<LibraryScreen> {
+  final MusicLibrary _musicLibrary = MusicLibrary();
+
+  late List<Song> _songs;
+  late String? _errorMessage;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _songs = widget.initialSongs;
+    _errorMessage = widget.initialError;
+  }
+
+  Future<void> _loadSongs() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final songs = await _musicLibrary.readSongs();
+
+      if (!mounted) return;
+
+      setState(() {
+        _songs = songs;
+      });
+    } on MusicLibraryException catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _errorMessage = error.message;
+      });
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _errorMessage = error.message ?? 'No pudimos leer tu música.';
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _errorMessage = 'Ocurrió un error inesperado.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  void _openPlayer(int songIndex) {
+    widget.playerController.playFromQueue(_songs, songIndex);
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) {
+          return NowPlayingScreen(
+            controller: widget.playerController,
+          );
+        },
+      ),
+    );
+  }
+
+  String _formatDuration(int milliseconds) {
+    final duration = Duration(milliseconds: milliseconds);
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+
+    return '$minutes:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: const Text('MusicBye'),
+        actions: [
+          IconButton(
+            tooltip: 'Actualizar biblioteca',
+            onPressed: _isLoading ? null : _loadSongs,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+      body: AnimatedBuilder(
+        animation: widget.playerController,
+        builder: (context, _) {
+          if (_isLoading) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (_errorMessage != null) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  _errorMessage!,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+
+          if (_songs.isEmpty) {
+            return const Center(
+              child: Text('No encontramos canciones en este dispositivo.'),
+            );
+          }
+
+          return ListView.separated(
+            itemCount: _songs.length,
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final song = _songs[index];
+              final isCurrentSong =
+                  widget.playerController.currentSong?.id == song.id;
+              final isPlaying =
+                  isCurrentSong && widget.playerController.isPlaying;
+
+              return ListTile(
+                leading: CircleAvatar(
+                  child: Icon(
+                    isPlaying ? Icons.graphic_eq : Icons.music_note,
+                  ),
+                ),
+                title: Text(
+                  song.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  '${song.artist} • ${song.album}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: Text(_formatDuration(song.duration)),
+                onTap: () => _openPlayer(index),
+              );
+            },
+          );
+        },
       ),
     );
   }

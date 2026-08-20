@@ -42,4 +42,11 @@
             <data android:mimeType="text/plain"/>
         </intent>
     </queries>
+    <!-- Lectura de música local en Android 12 y anteriores. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!-- Lectura de música local en Android 13 o posterior. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 </manifest>
